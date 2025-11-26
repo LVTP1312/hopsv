@@ -1,41 +1,162 @@
-# Compiled Lua sources
-luac.out
+--// Steal-a-Brainrot server hop (phím H)
+--// PlaceId: 109983668079237
 
-# luarocks build files
-*.src.rock
-*.zip
-*.tar.gz
+local PLACE_ID = 109983668079237
 
-# Object files
-*.o
-*.os
-*.ko
-*.obj
-*.elf
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local UIS = game:GetService("UserInputService")
 
-# Precompiled Headers
-*.gch
-*.pch
+-- Lưu server đã vào (JobId) để không join lại
+getgenv().SB_VisitedServers = getgenv().SB_VisitedServers or {}
+local visited = getgenv().SB_VisitedServers
+visited[game.JobId] = true
 
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-*.def
-*.exp
+-- Flag chống spam hop
+getgenv().SB_IsHopping = false
 
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
+-- Hàm lấy list server từ Roblox API
+local function GetServers(cursor)
+    local url = "https://games.roblox.com/v1/games/" .. tostring(PLACE_ID) .. "/servers/Public?sortOrder=Asc&limit=100"
+    if cursor then
+        url = url .. "&cursor=" .. cursor
+    end
 
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+    local suc, res = pcall(function()
+        return game:HttpGet(url)
+    end)
 
+    if not suc then
+        warn("[SB Hop] Lỗi lấy server list: ", res)
+        return nil
+    end
+
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(res)
+    end)
+
+    if not ok then
+        warn("[SB Hop] Lỗi decode JSON: ", data)
+        return nil
+    end
+
+    return data
+end
+
+-- (Optional) tính "giàu" trong server hiện tại bằng leaderstats (nếu game có)
+-- Không dùng để chọn server từ ngoài, chỉ để bạn tham khảo/tuỳ chỉnh thêm nếu thích
+local function GetCurrentServerRichness()
+    local maxValue = 0
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        local ls = plr:FindFirstChild("leaderstats")
+        if ls then
+            for _, v in ipairs(ls:GetChildren()) do
+                if v:IsA("IntValue") or v:IsA("NumberValue") then
+                    local value = tonumber(v.Value) or 0
+                    if value > maxValue then
+                        maxValue = value
+                    end
+                end
+            end
+        end
+    end
+
+    return maxValue
+end
+
+local currentRichness = GetCurrentServerRichness()
+
+-- Hàm chọn server mới: ưu tiên server đông người hơn server hiện tại,
+-- và chưa từng join (block server cũ)
+local function PickBestServer()
+    local myPlayerCount = #Players:GetPlayers()
+    local bestServer = nil
+    local bestPlayers = -1
+
+    local cursor = nil
+    local pageCount = 0
+    local MAX_PAGES = 8 -- tránh loop vô hạn
+
+    while pageCount < MAX_PAGES do
+        local data = GetServers(cursor)
+        if not data or not data.data then break end
+
+        for _, server in ipairs(data.data) do
+            -- server.id = JobId của server đó
+            if server.playing < server.maxPlayers and not visited[server.id] and server.id ~= game.JobId then
+                -- Ưu tiên server đông người hơn server hiện tại
+                local pCount = tonumber(server.playing) or 0
+
+                -- Ưu tiên 1: đông hơn server hiện tại
+                -- Ưu tiên 2: nếu nhiều server cùng > myPlayerCount thì lấy server đông nhất
+                if pCount > myPlayerCount then
+                    if pCount > bestPlayers then
+                        bestPlayers = pCount
+                        bestServer = server
+                    end
+                elseif not bestServer and pCount >= 2 then
+                    -- fallback: nếu không có server nào đông hơn,
+                    -- chọn server bất kỳ có >= 2 người (đỡ cô đơn)
+                    bestServer = server
+                    bestPlayers = pCount
+                end
+            end
+        end
+
+        if bestServer then
+            break
+        end
+
+        cursor = data.nextPageCursor
+        if not cursor then break end
+        pageCount = pageCount + 1
+        task.wait(0.1)
+    end
+
+    return bestServer
+end
+
+local function HopServer()
+    if getgenv().SB_IsHopping then
+        warn("[SB Hop] Đang hop rồi, chờ tí...")
+        return
+    end
+    getgenv().SB_IsHopping = true
+
+    print("[SB Hop] Đang tìm server mới (ưu tiên server đông / giàu hơn)...")
+
+    local target = PickBestServer()
+    if not target then
+        warn("[SB Hop] Không tìm được server mới phù hợp (hết server hoặc toàn server đã vào).")
+        getgenv().SB_IsHopping = false
+        return
+    end
+
+    -- Đánh dấu đã ghé server này để lần sau không join lại
+    visited[target.id] = true
+
+    print(("[SB Hop] Teleport tới server: %s | players: %d/%d")
+        :format(target.id, target.playing or 0, target.maxPlayers or 0))
+
+    local suc, err = pcall(function()
+        TeleportService:TeleportToPlaceInstance(PLACE_ID, target.id, LocalPlayer)
+    end)
+
+    if not suc then
+        warn("[SB Hop] Lỗi teleport: ", err)
+        getgenv().SB_IsHopping = false
+    end
+end
+
+-- Bind phím H để hop
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.H then
+        HopServer()
+    end
+end)
+
+print("[SB Hop] Đã load script. Bấm phím H để hop server (block server cũ, ưu tiên server đông hơn).")
