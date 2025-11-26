@@ -4,12 +4,11 @@
 local PLACE_ID = 109983668079237
 
 -- CẤU HÌNH
-local MIN_PLAYERS       = 2     -- server ít nhất bao nhiêu người
-local MAX_PLAYERS       = 6     -- server tối đa bao nhiêu người
-local MIN_FREE_SLOTS    = 2     -- tối thiểu slot trống
+local MIN_PLAYERS       = 3     -- server ít nhất bao nhiêu người
+local MAX_PLAYERS       = 7     -- server tối đa bao nhiêu người
 local MAX_SERVER_PAGES  = 8     -- tối đa số trang server API duyệt
+local MIN_FREE_SLOTS    = 2     -- tối thiểu slot trống (1 acc là đủ 2)
 
--- SERVICES
 local Players         = game:GetService("Players")
 local LocalPlayer     = Players.LocalPlayer
 local TeleportService = game:GetService("TeleportService")
@@ -21,9 +20,10 @@ getgenv().SB_VisitedServers = getgenv().SB_VisitedServers or {}
 local visited = getgenv().SB_VisitedServers
 visited[game.JobId] = true
 
-getgenv().SB_IsHopping = false
+getgenv().SB_IsHopping = getgenv().SB_IsHopping or false
 
----------------------------------------------------------------------local function GetServers(cursor)
+-- Hàm lấy list server
+local function GetServers(cursor)
     local url = "https://games.roblox.com/v1/games/" .. PLACE_ID .. "/servers/Public?sortOrder=Asc&limit=100"
     if cursor then
         url ..= "&cursor=" .. cursor
@@ -48,7 +48,8 @@ getgenv().SB_IsHopping = false
     return data
 end
 
-local function PickServer()
+-- Chọn server phù hợp
+local function PickBestServer()
     local goodServers = {}
     local cursor, pageCount = nil, 0
 
@@ -87,6 +88,7 @@ local function PickServer()
         return nil
     end
 
+    -- 1 acc → random cho đỡ chán
     return goodServers[math.random(1, #goodServers)]
 end
 
@@ -102,7 +104,7 @@ local function HopServer()
         MIN_PLAYERS, MAX_PLAYERS, MIN_FREE_SLOTS
     ))
 
-    local target = PickServer()
+    local target = PickBestServer()
     if not target then
         warn("[SB Hop] Không tìm được server phù hợp.")
         getgenv().SB_IsHopping = false
@@ -114,7 +116,7 @@ local function HopServer()
     local maxPlayer = tonumber(target.maxPlayers) or 0
     local freeSlots = maxPlayer - playing
 
-    visited[jobId] = true
+    visited[jobId] = true -- ghi nhớ để khỏi quay lại
 
     print(("[SB Hop] Teleport tới: %s | %d/%d (trống: %d)")
         :format(jobId, playing, maxPlayer, freeSlots))
@@ -128,18 +130,25 @@ local function HopServer()
     end
 end
 
-TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
-    if player ~= LocalPlayer then return end
-    warn("[SB Hop] Teleport fail:", teleportResult, tostring(errorMessage or ""))
-    getgenv().SB_IsHopping = false
-end)
+-- Chỉ tạo 1 connection TeleportInitFailed
+if not getgenv().SB_TeleportConn then
+    getgenv().SB_TeleportConn = TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
+        if player ~= LocalPlayer then return end
+        warn("[SB Hop] Teleport fail:", teleportResult, tostring(errorMessage or ""))
+        -- luôn reset flag để khỏi kẹt "Đang hop rồi..."
+        getgenv().SB_IsHopping = false
+    end)
+end
 
-UIS.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.KeyCode == Enum.KeyCode.H then
-        HopServer()
-    end
-end)
+-- Chỉ tạo 1 connection InputBegan
+if not getgenv().SB_InputConn then
+    getgenv().SB_InputConn = UIS.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.KeyCode == Enum.KeyCode.H then
+            HopServer()
+        end
+    end)
+end
 
 print(("[SB Hop] Load xong. Bấm H để hop (ưu tiên %d–%d người, ≥%d slot trống).")
     :format(MIN_PLAYERS, MAX_PLAYERS, MIN_FREE_SLOTS))
