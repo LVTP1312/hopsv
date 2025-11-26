@@ -7,8 +7,7 @@ local PLACE_ID = 109983668079237
 local MIN_PLAYERS       = 2     -- server ít nhất bao nhiêu người
 local MAX_PLAYERS       = 6     -- server tối đa bao nhiêu người
 local MAX_SERVER_PAGES  = 8     -- tối đa số trang server API duyệt
-local MIN_FREE_SLOTS    = 2     -- tối thiểu slot trống
-local MAX_HOP_RETRIES   = 5     -- tối đa số lần tự hop lại khi 772
+local MIN_FREE_SLOTS    = 2     -- tối thiểu slot trống (1 acc là đủ 2)
 
 local Players         = game:GetService("Players")
 local LocalPlayer     = Players.LocalPlayer
@@ -16,15 +15,13 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService     = game:GetService("HttpService")
 local UIS             = game:GetService("UserInputService")
 
--- STATE
 getgenv().SB_VisitedServers = getgenv().SB_VisitedServers or {}
 local visited = getgenv().SB_VisitedServers
 visited[game.JobId] = true
 
-getgenv().SB_IsHopping  = false
-getgenv().SB_HopRetries = 0
+getgenv().SB_IsHopping = false
 
----------------------------------------------------------------------local function GetServers(cursor)
+local function GetServers(cursor)
     local url = "https://games.roblox.com/v1/games/" .. PLACE_ID .. "/servers/Public?sortOrder=Asc&limit=100"
     if cursor then
         url ..= "&cursor=" .. cursor
@@ -33,28 +30,16 @@ getgenv().SB_HopRetries = 0
     local suc, res = pcall(function()
         return game:HttpGet(url)
     end)
-    if not suc then
-        warn("[SB Hop] Lỗi lấy server list:", res)
-        return nil
-    end
+    if not suc then return nil end
 
     local ok, data = pcall(function()
         return HttpService:JSONDecode(res)
     end)
-    if not ok then
-        warn("[SB Hop] Lỗi decode JSON:", data)
-        return nil
-    end
+    if not ok then return nil end
 
     return data
 end
 
--- Chọn 1 server phù hợp:
---  - Không trùng JobId hiện tại
---  - Không nằm trong visited
---  - Số người trong [MIN_PLAYERS, MAX_PLAYERS]
---  - Còn >= MIN_FREE_SLOTS slot trống
---  - Random trong list phù hợp (1 acc thôi)
 local function PickBestServer()
     local goodServers = {}
     local cursor, pageCount = nil, 0
@@ -90,23 +75,16 @@ local function PickBestServer()
         task.wait(0.1)
     end
 
-    if #goodServers == 0 then
-        return nil
-    end
-
+    if #goodServers == 0 then return nil end
+    -- 1 acc → random bớt nhàm
     return goodServers[math.random(1, #goodServers)]
 end
 
-local function StartHop(isRetry)
+local function HopServer()
     if getgenv().SB_IsHopping then
         warn("[SB Hop] Đang hop rồi, chờ tí...")
         return
     end
-
-    if not isRetry then
-        getgenv().SB_HopRetries = 0
-    end
-
     getgenv().SB_IsHopping = true
 
     print(string.format(
@@ -126,7 +104,7 @@ local function StartHop(isRetry)
     local maxPlayer = tonumber(target.maxPlayers) or 0
     local freeSlots = maxPlayer - playing
 
-    visited[jobId] = true -- dù fail cũng coi như đã thử, tránh quay lại
+    visited[jobId] = true
 
     print(("[SB Hop] Teleport tới: %s | %d/%d (trống: %d)")
         :format(jobId, playing, maxPlayer, freeSlots))
@@ -135,45 +113,17 @@ local function StartHop(isRetry)
         TeleportService:TeleportToPlaceInstance(PLACE_ID, jobId, LocalPlayer)
     end)
     if not suc then
-        warn("[SB Hop] Lỗi gọi Teleport:", err)
+        warn("[SB Hop] Lỗi teleport: ", err)
         getgenv().SB_IsHopping = false
     end
 end
 
------------------------------------------------------------------------ Bắt event khi teleport fail (ví dụ 772 – GameFull)
-TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
-    if player ~= LocalPlayer then return end
-
-    local msg = tostring(errorMessage or "")
-    warn("[SB Hop] TeleportInitFailed:", teleportResult, msg)
-
-    -- luôn reset flag để không bị kẹt "Đang hop rồi"
-    getgenv().SB_IsHopping = false
-
-    local isFull =
-        string.find(msg, "772") ~= nil or
-        string.find(string.lower(msg), "full") ~= nil
-
-    if isFull then
-        if getgenv().SB_HopRetries < MAX_HOP_RETRIES then
-            getgenv().SB_HopRetries += 1
-            warn("[SB Hop] Server full (772), thử server khác... Lần:", getgenv().SB_HopRetries)
-            task.delay(1.5, function()
-                StartHop(true)
-            end)
-        else
-            warn("[SB Hop] Đã thử lại nhiều lần mà vẫn full, dừng.")
-        end
-    end
-end)
-
------------------------------------------------------------------------ Bind phím H để hop
 UIS.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.H then
-        StartHop(false)
+        HopServer()
     end
 end)
 
-print(("[SB Hop] Load xong. Bấm H để hop (ưu tiên %d–%d người, ≥%d slot trống, auto retry khi full).")
+print(("[SB Hop] Load xong. Bấm H để hop (ưu tiên %d–%d người, ≥%d slot trống).")
     :format(MIN_PLAYERS, MAX_PLAYERS, MIN_FREE_SLOTS))
