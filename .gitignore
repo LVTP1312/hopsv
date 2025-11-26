@@ -4,10 +4,9 @@
 local PLACE_ID = 109983668079237
 
 -- CẤU HÌNH
-local MIN_PLAYERS       = 3     -- server ít nhất bao nhiêu người
-local MAX_PLAYERS       = 7     -- server tối đa bao nhiêu người
-local MAX_SERVER_PAGES  = 8     -- tối đa số trang server API duyệt
-local MIN_FREE_SLOTS    = 2     -- tối thiểu slot trống (1 acc là đủ 2)
+local MIN_PLAYERS    = 2   -- server ít nhất bao nhiêu người
+local MAX_PLAYERS    = 6   -- server tối đa bao nhiêu người
+local MIN_FREE_SLOTS = 2   -- tối thiểu slot trống (1 acc thì 2 là đủ)
 
 local Players         = game:GetService("Players")
 local LocalPlayer     = Players.LocalPlayer
@@ -15,25 +14,28 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService     = game:GetService("HttpService")
 local UIS             = game:GetService("UserInputService")
 
--- STATE dùng chung giữa các lần exec
-getgenv().SB_VisitedServers = getgenv().SB_VisitedServers or {}
+-- STATE dùng chung
+getgenv().SB_VisitedServers   = getgenv().SB_VisitedServers or {}
+getgenv().SB_IsHopping        = getgenv().SB_IsHopping or false
+
 local visited = getgenv().SB_VisitedServers
 visited[game.JobId] = true
 
-getgenv().SB_IsHopping = getgenv().SB_IsHopping or false
-
--- Hàm lấy list server
-local function GetServers(cursor)
+---------------------------------------------------------------------local function GetServersOnce()
+    -- CHỈ GỌI 1 LẦN, LẤY PAGE ĐẦU 100 SERVER
     local url = "https://games.roblox.com/v1/games/" .. PLACE_ID .. "/servers/Public?sortOrder=Asc&limit=100"
-    if cursor then
-        url ..= "&cursor=" .. cursor
-    end
 
     local suc, res = pcall(function()
         return game:HttpGet(url)
     end)
+
     if not suc then
-        warn("[SB Hop] Lỗi lấy server list:", res)
+        local msg = tostring(res)
+        if string.find(msg, "429") or string.find(string.lower(msg), "too many requests") then
+            warn("[SB Hop] Roblox chặn lấy list server (HTTP 429: Too Many Requests).")
+        else
+            warn("[SB Hop] Lỗi lấy server list:", msg)
+        end
         return nil
     end
 
@@ -48,48 +50,37 @@ local function GetServers(cursor)
     return data
 end
 
--- Chọn server phù hợp
-local function PickBestServer()
-    local goodServers = {}
-    local cursor, pageCount = nil, 0
-
-    while pageCount < MAX_SERVER_PAGES do
-        local data = GetServers(cursor)
-        if not data or not data.data then break end
-
-        for _, server in ipairs(data.data) do
-            local jobId     = server.id
-            local playing   = tonumber(server.playing) or 0
-            local maxPlayer = tonumber(server.maxPlayers) or 0
-            local freeSlots = maxPlayer - playing
-
-            if jobId
-                and jobId ~= game.JobId
-                and not visited[jobId]
-                and playing >= MIN_PLAYERS
-                and playing <= MAX_PLAYERS
-                and freeSlots >= MIN_FREE_SLOTS
-            then
-                table.insert(goodServers, server)
-            end
-        end
-
-        if #goodServers > 0 then
-            break
-        end
-
-        cursor = data.nextPageCursor
-        if not cursor then break end
-        pageCount += 1
-        task.wait(0.1)
-    end
-
-    if #goodServers == 0 then
+local function PickBestServerFast()
+    local data = GetServersOnce()
+    if not data or not data.data then
         return nil
     end
 
-    -- 1 acc → random cho đỡ chán
-    return goodServers[math.random(1, #goodServers)]
+    local candidates = {}
+
+    for _, server in ipairs(data.data) do
+        local jobId     = server.id
+        local playing   = tonumber(server.playing) or 0
+        local maxPlayer = tonumber(server.maxPlayers) or 0
+        local freeSlots = maxPlayer - playing
+
+        if jobId
+            and jobId ~= game.JobId
+            and not visited[jobId]
+            and playing >= MIN_PLAYERS
+            and playing <= MAX_PLAYERS
+            and freeSlots >= MIN_FREE_SLOTS
+        then
+            table.insert(candidates, server)
+        end
+    end
+
+    if #candidates == 0 then
+        return nil
+    end
+
+    -- random 1 server trong số 100 server mới nhất đó
+    return candidates[math.random(1, #candidates)]
 end
 
 local function HopServer()
@@ -100,13 +91,13 @@ local function HopServer()
     getgenv().SB_IsHopping = true
 
     print(string.format(
-        "[SB Hop] Tìm server (min: %d, max: %d người, ≥%d slot trống)...",
+        "[SB Hop] Tìm server (min: %d, max: %d người, ≥%d slot trống, quét 1 page)...",
         MIN_PLAYERS, MAX_PLAYERS, MIN_FREE_SLOTS
     ))
 
-    local target = PickBestServer()
+    local target = PickBestServerFast()
     if not target then
-        warn("[SB Hop] Không tìm được server phù hợp.")
+        warn("[SB Hop] Không tìm được server phù hợp trong 100 server gần nhất.")
         getgenv().SB_IsHopping = false
         return
     end
@@ -116,7 +107,7 @@ local function HopServer()
     local maxPlayer = tonumber(target.maxPlayers) or 0
     local freeSlots = maxPlayer - playing
 
-    visited[jobId] = true -- ghi nhớ để khỏi quay lại
+    visited[jobId] = true
 
     print(("[SB Hop] Teleport tới: %s | %d/%d (trống: %d)")
         :format(jobId, playing, maxPlayer, freeSlots))
@@ -130,17 +121,16 @@ local function HopServer()
     end
 end
 
--- Chỉ tạo 1 connection TeleportInitFailed
+-- reset flag khi teleport fail (772, v.v.)
 if not getgenv().SB_TeleportConn then
     getgenv().SB_TeleportConn = TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
         if player ~= LocalPlayer then return end
         warn("[SB Hop] Teleport fail:", teleportResult, tostring(errorMessage or ""))
-        -- luôn reset flag để khỏi kẹt "Đang hop rồi..."
         getgenv().SB_IsHopping = false
     end)
 end
 
--- Chỉ tạo 1 connection InputBegan
+-- bind phím H, chỉ bind 1 lần
 if not getgenv().SB_InputConn then
     getgenv().SB_InputConn = UIS.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
@@ -150,5 +140,5 @@ if not getgenv().SB_InputConn then
     end)
 end
 
-print(("[SB Hop] Load xong. Bấm H để hop (ưu tiên %d–%d người, ≥%d slot trống).")
+print(("[SB Hop] Load xong. Bấm H để hop (ưu tiên %d–%d người, ≥%d slot trống, 1 request là xong).")
     :format(MIN_PLAYERS, MAX_PLAYERS, MIN_FREE_SLOTS))
