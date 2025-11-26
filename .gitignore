@@ -4,8 +4,8 @@
 local PLACE_ID = 109983668079237
 
 -- CẤU HÌNH
-local MIN_PLAYERS    = 2   -- server ít nhất bao nhiêu người
-local MAX_PLAYERS    = 6   -- server tối đa bao nhiêu người
+local MIN_PLAYERS    = 3   -- server ít nhất bao nhiêu người
+local MAX_PLAYERS    = 7   -- server tối đa bao nhiêu người
 local MIN_FREE_SLOTS = 2   -- tối thiểu slot trống (1 acc thì 2 là đủ)
 
 local Players         = game:GetService("Players")
@@ -15,8 +15,8 @@ local HttpService     = game:GetService("HttpService")
 local UIS             = game:GetService("UserInputService")
 
 -- STATE dùng chung
-getgenv().SB_VisitedServers   = getgenv().SB_VisitedServers or {}
-getgenv().SB_IsHopping        = getgenv().SB_IsHopping or false
+getgenv().SB_VisitedServers = getgenv().SB_VisitedServers or {}
+getgenv().SB_IsHopping      = getgenv().SB_IsHopping or false
 
 local visited = getgenv().SB_VisitedServers
 visited[game.JobId] = true
@@ -79,7 +79,6 @@ local function PickBestServerFast()
         return nil
     end
 
-    -- random 1 server trong số 100 server mới nhất đó
     return candidates[math.random(1, #candidates)]
 end
 
