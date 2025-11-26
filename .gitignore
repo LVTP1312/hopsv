@@ -3,39 +3,25 @@
 
 local PLACE_ID = 109983668079237
 
--- CẤU HÌNH LỌC SERVER
+-- CẤU HÌNH
 local MIN_PLAYERS       = 2     -- server ít nhất bao nhiêu người
 local MAX_PLAYERS       = 6     -- server tối đa bao nhiêu người
 local MAX_SERVER_PAGES  = 8     -- tối đa số trang server API duyệt
 local MIN_FREE_SLOTS    = 2     -- tối thiểu slot trống (1 acc là đủ 2)
 
--- CẤU HÌNH HISTORY
-local MAX_HISTORY       = 30    -- lưu tối đa 30 server
--- sau khi đủ 30 server thì sẽ quay vòng vào lại 30 server đó
-
--- SERVICES
 local Players         = game:GetService("Players")
 local LocalPlayer     = Players.LocalPlayer
 local TeleportService = game:GetService("TeleportService")
 local HttpService     = game:GetService("HttpService")
 local UIS             = game:GetService("UserInputService")
 
--- STATE DÙNG CHUNG GIỮA CÁC LẦN EXEC
-getgenv().SB_IsHopping     = getgenv().SB_IsHopping or false
-getgenv().SB_ServerList    = getgenv().SB_ServerList or {}  -- array jobId
-getgenv().SB_ServerSet     = getgenv().SB_ServerSet or {}   -- set để check trùng
-getgenv().SB_ServerIndex   = getgenv().SB_ServerIndex or 1  -- pointer quay vòng
-getgenv().SB_LastJobId     = getgenv().SB_LastJobId or nil  -- jobId vừa teleport
-local historyList = getgenv().SB_ServerList
-local historySet  = getgenv().SB_ServerSet
+getgenv().SB_VisitedServers = getgenv().SB_VisitedServers or {}
+local visited = getgenv().SB_VisitedServers
+visited[game.JobId] = true
 
--- thêm server hiện tại vào history (nếu chưa có)
-if not historySet[game.JobId] then
-    table.insert(historyList, game.JobId)
-    historySet[game.JobId] = true
-end
+getgenv().SB_IsHopping = false
 
----------------------------------------------------------------------local function GetServers(cursor)
+local function GetServers(cursor)
     local url = "https://games.roblox.com/v1/games/" .. PLACE_ID .. "/servers/Public?sortOrder=Asc&limit=100"
     if cursor then
         url ..= "&cursor=" .. cursor
@@ -44,24 +30,17 @@ end
     local suc, res = pcall(function()
         return game:HttpGet(url)
     end)
-    if not suc then
-        warn("[SB Hop] Lỗi lấy server list: ", res)
-        return nil
-    end
+    if not suc then return nil end
 
     local ok, data = pcall(function()
         return HttpService:JSONDecode(res)
     end)
-    if not ok then
-        warn("[SB Hop] Lỗi decode JSON: ", data)
-        return nil
-    end
+    if not ok then return nil end
 
     return data
 end
 
--- TÌM 1 SERVER MỚI (chưa có trong history)
-local function PickNewServer()
+local function PickBestServer()
     local goodServers = {}
     local cursor, pageCount = nil, 0
 
@@ -77,7 +56,7 @@ local function PickNewServer()
 
             if jobId
                 and jobId ~= game.JobId
-                and not historySet[jobId]
+                and not visited[jobId]
                 and playing >= MIN_PLAYERS
                 and playing <= MAX_PLAYERS
                 and freeSlots >= MIN_FREE_SLOTS
@@ -97,99 +76,38 @@ local function PickNewServer()
     end
 
     if #goodServers == 0 then return nil end
+    -- 1 acc → random bớt nhàm
     return goodServers[math.random(1, #goodServers)]
 end
 
--- LẤY JOBID ĐỂ TELEPORT:
---  - nếu history < 30 → ưu tiên tìm server mới, add vào history
---  - nếu history đã đủ 30 → lấy theo vòng tròn từ list 30 server
-local function GetNextJobId()
-    local historySize = #historyList
-
-    -- chưa đủ 30 server hoặc history đang trống → tìm server mới
-    if historySize < MAX_HISTORY or historySize == 0 then
-        local target = PickNewServer()
-        if not target then
-            return nil, "no_new"
-        end
-
-        local jobId = target.id
-        table.insert(historyList, jobId)
-        historySet[jobId] = true
-
-        print(string.format("[SB Hop] Thêm server mới vào history (%d/%d): %s",
-            #historyList, MAX_HISTORY, jobId))
-
-        return jobId, "new"
-    end
-
-    -- đã đủ 30 server → quay vòng
-    if getgenv().SB_ServerIndex > historySize then
-        getgenv().SB_ServerIndex = 1
-    end
-
-    local jobId = historyList[getgenv().SB_ServerIndex]
-    getgenv().SB_ServerIndex += 1
-
-    print(string.format("[SB Hop] Dùng lại server trong history (%d/%d) index=%d: %s",
-        historySize, MAX_HISTORY, getgenv().SB_ServerIndex - 1, jobId))
-
-    return jobId, "reuse"
-end
-
--- XOÁ 1 JOBID KHỎI HISTORY (khi server chết / không còn tồn tại)
-local function RemoveFromHistory(jobId)
-    if not jobId or not historySet[jobId] then return end
-    historySet[jobId] = nil
-
-    for i, id in ipairs(historyList) do
-        if id == jobId then
-            table.remove(historyList, i)
-            break
-        end
-    end
-
-    print(string.format("[SB Hop] Xoá server chết khỏi history, còn lại %d server.", #historyList))
-
-    -- chỉnh lại index cho an toàn
-    if getgenv().SB_ServerIndex > #historyList then
-        getgenv().SB_ServerIndex = 1
-    end
-end
-
----------------------------------------------------------------------local function HopServer(isRetryNew)
+local function HopServer()
     if getgenv().SB_IsHopping then
         warn("[SB Hop] Đang hop rồi, chờ tí...")
         return
     end
     getgenv().SB_IsHopping = true
 
-    local jobId, kind = GetNextJobId()
+    print(string.format(
+        "[SB Hop] Tìm server (min: %d, max: %d người, ≥%d slot trống)...",
+        MIN_PLAYERS, MAX_PLAYERS, MIN_FREE_SLOTS
+    ))
 
-    -- nếu được yêu cầu retry với server mới (khi server cũ không tồn tại)
-    if isRetryNew then
-        local target = PickNewServer()
-        if target then
-            jobId = target.id
-            if not historySet[jobId] and #historyList < MAX_HISTORY then
-                table.insert(historyList, jobId)
-                historySet[jobId] = true
-                print(string.format("[SB Hop] Thêm server thay thế vào history (%d/%d): %s",
-                    #historyList, MAX_HISTORY, jobId))
-            end
-            kind = "new-retry"
-        end
-    end
-
-    if not jobId then
-        warn("[SB Hop] Không kiếm được server để hop (hết server phù hợp / Roblox chặn API).")
+    local target = PickBestServer()
+    if not target then
+        warn("[SB Hop] Không tìm được server phù hợp.")
         getgenv().SB_IsHopping = false
         return
     end
 
-    getgenv().SB_LastJobId = jobId
+    local jobId     = target.id
+    local playing   = tonumber(target.playing) or 0
+    local maxPlayer = tonumber(target.maxPlayers) or 0
+    local freeSlots = maxPlayer - playing
 
-    print(string.format("[SB Hop] Teleport (%s) tới JobId: %s", kind or "?", jobId))
+    visited[jobId] = true
+
+    print(("[SB Hop] Teleport tới: %s | %d/%d (trống: %d)")
+        :format(jobId, playing, maxPlayer, freeSlots))
 
     local suc, err = pcall(function()
         TeleportService:TeleportToPlaceInstance(PLACE_ID, jobId, LocalPlayer)
@@ -200,48 +118,12 @@ end
     end
 end
 
--- HANDLE TELEPORT FAIL:
---  - nếu server không tồn tại / game đã đóng → xoá khỏi history, hop server mới
---  - lỗi khác thì chỉ reset flag
-if not getgenv().SB_TeleportConn_History then
-    getgenv().SB_TeleportConn_History = TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
-        if player ~= LocalPlayer then return end
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.H then
+        HopServer()
+    end
+end)
 
-        local msg = tostring(errorMessage or "")
-        warn("[SB Hop] Teleport fail:", teleportResult, msg)
-
-        local lower = string.lower(msg)
-        local isGone =
-            lower:find("instance") or
-            lower:find("does not exist") or
-            lower:find("shutdown") or
-            lower:find("game ended")
-
-        if isGone then
-            -- server không tồn tại nữa → xoá khỏi history và thử server mới
-            RemoveFromHistory(getgenv().SB_LastJobId)
-            getgenv().SB_IsHopping = false
-            task.delay(1, function()
-                HopServer(true)
-            end)
-        else
-            -- lỗi khác (vd full, network) → chỉ reset flag, lần sau bấm H lại
-            getgenv().SB_IsHopping = false
-        end
-    end)
-end
-
--- BIND PHÍM H (chỉ bind 1 lần)
-if not getgenv().SB_InputConn_History then
-    getgenv().SB_InputConn_History = UIS.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
-        if input.KeyCode == Enum.KeyCode.H then
-            HopServer(false)
-        end
-    end)
-end
-
-print(string.format(
-    "[SB Hop] Load xong. Bấm H để hop (history tối đa %d server, quay vòng lại nếu đủ 30).",
-    MAX_HISTORY
-))
+print(("[SB Hop] Load xong. Bấm H để hop (ưu tiên %d–%d người, ≥%d slot trống).")
+    :format(MIN_PLAYERS, MAX_PLAYERS, MIN_FREE_SLOTS))
