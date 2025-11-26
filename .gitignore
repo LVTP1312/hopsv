@@ -6,7 +6,7 @@ local PLACE_ID = 109983668079237
 -- CẤU HÌNH
 local MIN_PLAYERS       = 2     -- server ít nhất bao nhiêu người
 local MAX_PLAYERS       = 6     -- server tối đa bao nhiêu người
-local MIN_FREE_SLOTS    = 2     -- tối thiểu slot trống (1 acc thì 2 là đủ)
+local MIN_FREE_SLOTS    = 2     -- tối thiểu slot trống
 local MAX_SERVER_PAGES  = 8     -- tối đa số trang server API duyệt
 
 -- SERVICES
@@ -16,10 +16,10 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService     = game:GetService("HttpService")
 local UIS             = game:GetService("UserInputService")
 
--- STATE chung (lưu được giữa các lần re-exec)
+-- STATE dùng chung giữa các lần exec
 getgenv().SB_VisitedServers = getgenv().SB_VisitedServers or {}
 local visited = getgenv().SB_VisitedServers
-visited[game.JobId] = true -- block luôn server hiện tại
+visited[game.JobId] = true
 
 getgenv().SB_IsHopping = false
 
@@ -48,12 +48,6 @@ getgenv().SB_IsHopping = false
     return data
 end
 
--- Chọn server:
---  - không trùng JobId hiện tại
---  - chưa nằm trong visited
---  - số người trong [MIN_PLAYERS, MAX_PLAYERS]
---  - còn >= MIN_FREE_SLOTS slot trống
---  - random 1 server trong list phù hợp
 local function PickServer()
     local goodServers = {}
     local cursor, pageCount = nil, 0
@@ -110,7 +104,7 @@ local function HopServer()
 
     local target = PickServer()
     if not target then
-        warn("[SB Hop] Không tìm được server phù hợp (hết server hoặc trùng hết).")
+        warn("[SB Hop] Không tìm được server phù hợp.")
         getgenv().SB_IsHopping = false
         return
     end
@@ -120,7 +114,7 @@ local function HopServer()
     local maxPlayer = tonumber(target.maxPlayers) or 0
     local freeSlots = maxPlayer - playing
 
-    visited[jobId] = true -- kể cả fail cũng coi như đã thử
+    visited[jobId] = true
 
     print(("[SB Hop] Teleport tới: %s | %d/%d (trống: %d)")
         :format(jobId, playing, maxPlayer, freeSlots))
@@ -129,23 +123,17 @@ local function HopServer()
         TeleportService:TeleportToPlaceInstance(PLACE_ID, jobId, LocalPlayer)
     end)
     if not suc then
-        warn("[SB Hop] Lỗi gọi Teleport:", err)
+        warn("[SB Hop] Lỗi teleport:", err)
         getgenv().SB_IsHopping = false
     end
 end
 
------------------------------------------------------------------------ -- Khi teleport fail (ví dụ 772 – server full) → chỉ reset flag cho bạn bấm lại
 TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
     if player ~= LocalPlayer then return end
-
-    local msg = tostring(errorMessage or "")
-    warn("[SB Hop] Teleport fail:", teleportResult, msg)
-
-    -- luôn reset để khỏi kẹt "Đang hop rồi..."
+    warn("[SB Hop] Teleport fail:", teleportResult, tostring(errorMessage or ""))
     getgenv().SB_IsHopping = false
 end)
 
------------------------------------------------------------------------ -- Bind phím H để hop
 UIS.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.H then
@@ -153,5 +141,5 @@ UIS.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
-print(("[SB Hop] Load xong. Bấm H để hop (ưu tiên %d–%d người, ≥%d slot trống, không trùng JobId).")
+print(("[SB Hop] Load xong. Bấm H để hop (ưu tiên %d–%d người, ≥%d slot trống).")
     :format(MIN_PLAYERS, MAX_PLAYERS, MIN_FREE_SLOTS))
