@@ -4,11 +4,12 @@
 local PLACE_ID = 109983668079237
 
 -- CẤU HÌNH
-local MIN_PLAYERS           = 2     -- server ít nhất bao nhiêu người
-local MAX_PLAYERS           = 8     -- server tối đa bao nhiêu người (tránh quá đông, macro lỗi spawn)
-local MAX_SERVER_PAGES      = 8     -- tối đa số trang server API duyệt
-local TELEPORT_REPEATS      = 3     -- ép teleport: gọi lại bao nhiêu lần
-local TELEPORT_REPEAT_DELAY = 2     -- delay giữa mỗi lần ép teleport (giây)
+local MIN_PLAYERS           = 3      -- server ít nhất bao nhiêu người
+local MAX_PLAYERS           = 7      -- server tối đa bao nhiêu người (tránh quá đông, macro lỗi spawn)
+local MAX_SERVER_PAGES      = 8      -- tối đa số trang server API duyệt
+local FREE_SLOTS_BUFFER     = 2      -- BẮT BUỘC còn ít nhất bấy nhiêu slot trống (fix server full 772)
+local TELEPORT_REPEATS      = 3      -- ép teleport: gọi lại bao nhiêu lần
+local TELEPORT_REPEAT_DELAY = 2      -- delay giữa mỗi lần ép teleport (giây)
 
 -- SERVICES
 local Players         = game:GetService("Players")
@@ -56,11 +57,11 @@ end
 -- Chọn server mới:
 --  - Không trùng JobId hiện tại
 --  - Không nằm trong visited (block server cũ)
---  - Không full (playing < maxPlayers)
+--  - Không full & phải còn ít nhất FREE_SLOTS_BUFFER slot
 --  - Ưu tiên server có số người trong [MIN_PLAYERS, MAX_PLAYERS]
 local function PickBestServer()
-    local goodServers = {}   -- server trong range MIN–MAX
-    local fallback     = nil -- nếu không có server trong range thì lấy tạm server bất kỳ không full & chưa visited
+    local goodServers = {}   -- server trong range
+    local fallback     = nil -- nếu không có server trong range thì lấy tạm server bất kỳ hợp lệ
 
     local cursor    = nil
     local pageCount = 0
@@ -72,21 +73,22 @@ local function PickBestServer()
         end
 
         for _, server in ipairs(data.data) do
-            local jobId = server.id
-            local playing = tonumber(server.playing) or 0
-            local maxPlayers = tonumber(server.maxPlayers) or 0
+            local jobId     = server.id
+            local playing   = tonumber(server.playing) or 0
+            local maxPlayer = tonumber(server.maxPlayers) or 0
 
-            -- bỏ server hiện tại / server đã visited / server full
+            -- số slot trống hiện tại
+            local freeSlots = maxPlayer - playing
+
             if jobId
                 and jobId ~= game.JobId
                 and not visited[jobId]
-                and playing < maxPlayers
+                -- phải còn đủ slot trống để tránh full
+                and freeSlots >= FREE_SLOTS_BUFFER
             then
-                -- ưu tiên server có số người trong khoảng
                 if playing >= MIN_PLAYERS and playing <= MAX_PLAYERS then
                     table.insert(goodServers, server)
                 elseif not fallback then
-                    -- nếu chưa có server trong range thì lưu 1 server bất kỳ làm fallback
                     fallback = server
                 end
             end
@@ -105,7 +107,7 @@ local function PickBestServer()
     end
 
     if #goodServers > 0 then
-        -- random 1 server trong danh sách phù hợp (đỡ bị nhiều acc đổ vào chung 1 server)
+        -- random 1 server trong danh sách phù hợp
         return goodServers[math.random(1, #goodServers)]
     end
 
@@ -113,7 +115,6 @@ local function PickBestServer()
 end
 
 local function ForceTeleport(targetJobId)
-    -- ÉP TELEPORT: gọi TeleportToPlaceInstance nhiều lần
     task.spawn(function()
         for i = 1, TELEPORT_REPEATS do
             local suc, err = pcall(function()
@@ -135,9 +136,10 @@ local function HopServer()
     getgenv().SB_IsHopping = true
 
     print(string.format(
-        "[SB Hop] Đang tìm server mới (min: %d, max: %d người, block trùng JobId)...",
+        "[SB Hop] Đang tìm server mới (min: %d, max: %d người, phải còn ≥%d slot trống, block trùng JobId)...",
         MIN_PLAYERS,
-        MAX_PLAYERS
+        MAX_PLAYERS,
+        FREE_SLOTS_BUFFER
     ))
 
     local target = PickBestServer()
@@ -154,17 +156,17 @@ local function HopServer()
     -- đánh dấu visited luôn, kể cả teleport fail → block server cũ
     visited[jobId] = true
 
-    print(("[SB Hop] Teleport tới server: %s | players: %d/%d")
-        :format(jobId, playing, maxPlayer))
+    print(("[SB Hop] Teleport tới server: %s | players: %d/%d (trống: %d)")
+        :format(jobId, playing, maxPlayer, maxPlayer - playing))
 
     -- Ép teleport
     ForceTeleport(jobId)
 
-    -- Nếu sau 15 giây vẫn còn ở server cũ thì cho phép hop lại
+    -- Sau 15s vẫn còn ở server cũ thì cho phép hop lại
     local oldJobId = game.JobId
     task.delay(15, function()
         if game.JobId == oldJobId then
-            warn("[SB Hop] Có vẻ teleport fail, bạn có thể bấm H lần nữa.")
+            warn("[SB Hop] Có vẻ teleport fail (có thể server full), bạn bấm H lần nữa để thử server khác.")
             getgenv().SB_IsHopping = false
         end
     end)
@@ -172,13 +174,11 @@ end
 
 -- Bind phím H để hop
 UIS.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then
-        return
-    end
+    if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.H then
         HopServer()
     end
 end)
 
-print(("[SB Hop] Đã load script. Bấm H để hop server (block server cũ, tránh server full, ưu tiên %d-%d người).")
-    :format(MIN_PLAYERS, MAX_PLAYERS))
+print(("[SB Hop] Đã load script. Bấm H để hop server (ưu tiên %d-%d người, còn ≥%d slot trống, block server cũ).")
+    :format(MIN_PLAYERS, MAX_PLAYERS, FREE_SLOTS_BUFFER))
