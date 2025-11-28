@@ -1,4 +1,4 @@
---// Steal-a-Brainrot server hop (phim H)
+--// Steal-a-Brainrot server hop (auto sau 3s + phím H)
 --// PlaceId: 109983668079237
 
 local PLACE_ID = 109983668079237
@@ -155,7 +155,13 @@ local function HopServer()
     end
 end
 
--- Bind phim H de hop
+-- 🔹 Auto hop sau 3 giây khi execute script
+task.spawn(function()
+    task.wait(3)
+    HopServer()
+end)
+
+-- Bind phim H de hop lại (neu muon)
 UIS.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then
         return
@@ -165,5 +171,5 @@ UIS.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
-print(("[SB Hop] Load xong. Bam H de hop (uu tien %d-%d nguoi, >=%d slot trong).")
+print(("[SB Hop] Load xong. Se auto hop sau 3s. Nhan H de hop lai (uu tien %d-%d nguoi, >=%d slot trong).")
     :format(MIN_PLAYERS, MAX_PLAYERS, MIN_FREE_SLOTS))
