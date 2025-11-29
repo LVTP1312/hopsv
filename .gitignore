@@ -1,4 +1,4 @@
---// Steal-a-Brainrot server hop (auto sau 3s + phím H)
+--// Steal-a-Brainrot server hop (auto sau 10s + phím H)
 --// PlaceId: 109983668079237
 
 local PLACE_ID = 109983668079237
@@ -155,9 +155,9 @@ local function HopServer()
     end
 end
 
--- 🔹 Auto hop sau 3 giây khi execute script
+-- 🔹 Auto hop sau 10 giây khi execute script
 task.spawn(function()
-    task.wait(3)
+    task.wait(10) -- <-- đổi từ 3 thành 10
     HopServer()
 end)
 
@@ -171,5 +171,5 @@ UIS.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
-print(("[SB Hop] Load xong. Se auto hop sau 3s. Nhan H de hop lai (uu tien %d-%d nguoi, >=%d slot trong).")
+print(("[SB Hop] Load xong. Se auto hop sau 10s. Nhan H de hop lai (uu tien %d-%d nguoi, >=%d slot trong).")
     :format(MIN_PLAYERS, MAX_PLAYERS, MIN_FREE_SLOTS))
