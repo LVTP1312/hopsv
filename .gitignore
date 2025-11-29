@@ -4,7 +4,7 @@
 local PLACE_ID = 109983668079237
 
 -- CẤU HÌNH
-local MIN_PLAYERS       = 3    -- server ít nhất bao nhiêu người
+local MIN_PLAYERS       = 0    -- server ít nhất bao nhiêu người
 local MAX_PLAYERS       = 7    -- server tối đa bao nhiêu người
 local MAX_SERVER_PAGES  = 8    -- tối đa số trang server API duyệt
 local MIN_FREE_SLOTS    = 2    -- tối thiểu slot trống
