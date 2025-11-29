@@ -1,4 +1,4 @@
---// Steal-a-Brainrot server hop (auto sau 10s + phím H)
+--// Steal-a-Brainrot server hop (auto sau 10s + phím H, retry 5s)
 --// PlaceId: 109983668079237
 
 local PLACE_ID = 109983668079237
@@ -116,6 +116,42 @@ local function PickBestServer()
     return nil
 end
 
+-- Hàm teleport với retry 5s/lần cho đến khi sang server mới
+local function TeleportWithRetry(placeId, jobId, retryDelay)
+    retryDelay = retryDelay or 5
+    local startJobId = game.JobId
+    local attempt = 0
+
+    while game.JobId == startJobId do
+        attempt = attempt + 1
+        print(("[SB Hop] Thu teleport lan %d..."):format(attempt))
+
+        local success, err = pcall(function()
+            TeleportService:TeleportToPlaceInstance(placeId, jobId, LocalPlayer)
+        end)
+
+        if not success then
+            warn("[SB Hop] Loi teleport lan " .. attempt .. ": " .. tostring(err))
+        end
+
+        -- chờ tối đa retryDelay giây, nếu JobId đổi thì coi như tp thành công
+        local elapsed = 0
+        while elapsed < retryDelay do
+            task.wait(0.1)
+            elapsed = elapsed + 0.1
+            if game.JobId ~= startJobId then
+                print("[SB Hop] Da sang server moi sau " .. attempt .. " lan thu.")
+                return true
+            end
+        end
+
+        -- nếu tới đây mà JobId vẫn chưa đổi thì loop tiếp, gọi tp lại
+        print("[SB Hop] Van o server cu sau " .. retryDelay .. "s, thu tp lai...")
+    end
+
+    return false
+end
+
 -- Hàm hop server
 local function HopServer()
     if getgenv().SB_IsHopping then
@@ -143,21 +179,21 @@ local function HopServer()
 
     visited[jobId] = true
 
-    print(("[SB Hop] Teleport toi: %s | %d/%d (trong: %d)")
+    print(("[SB Hop] Muc tieu: %s | %d/%d (trong: %d)")
         :format(jobId, playing, maxPlayer, freeSlots))
 
-    local success, err = pcall(function()
-        TeleportService:TeleportToPlaceInstance(PLACE_ID, jobId, LocalPlayer)
-    end)
-    if not success then
-        warn("[SB Hop] Loi teleport: ", err)
+    -- ★ gọi teleport + retry 5s/lần
+    TeleportWithRetry(PLACE_ID, jobId, 5)
+
+    -- nếu tới đây mà vẫn chưa sang server mới (Teleport fail hoài) thì mở lại flag
+    if game.JobId == game.JobId then
         getgenv().SB_IsHopping = false
     end
 end
 
 -- 🔹 Auto hop sau 10 giây khi execute script
 task.spawn(function()
-    task.wait(10) -- <-- đổi từ 3 thành 10
+    task.wait(10) -- auto sau 10s
     HopServer()
 end)
 
@@ -171,5 +207,5 @@ UIS.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
-print(("[SB Hop] Load xong. Se auto hop sau 10s. Nhan H de hop lai (uu tien %d-%d nguoi, >=%d slot trong).")
+print(("[SB Hop] Load xong. Se auto hop sau 10s. Nhan H de hop lai (uu tien %d-%d nguoi, >=%d slot trong, retry 5s).")
     :format(MIN_PLAYERS, MAX_PLAYERS, MIN_FREE_SLOTS))
